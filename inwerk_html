@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>PLUS Inwerk Dashboard</title>
+  
+  <!-- React & ReactDOM -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  
+  <!-- Babel (voor JSX vertaling in de browser) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: { plusGroen: '#00A859' }
+        }
+      }
+    }
+  </script>
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-gray-100 text-gray-800 antialiased font-sans">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // --- VUL HIER JOUW SUPABASE GEGEVENS IN ---
+    const SUPABASE_URL = 'https://iifgmebfinlftozezyvs.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlpZmdtZWJmaW5sZnRvemV6eXZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAzNDY2OTYsImV4cCI6MjA2NTkyMjY5Nn0.VFMr45HrUxw2stkuaPw8V7nTwkHdL70JhoSiWbI5wKQ';
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    // ------------------------------------------
+
+    function App() {
+      const [activeTab, setActiveTab] = useState('medewerkers');
+      const [diensten, setDiensten] = useState({});
+      const [medewerkers, setMedewerkers] = useState([]);
+      const [nieuweTaakInput, setNieuweTaakInput] = useState({});
+      
+      const [nieuweMedewerker, setNieuweMedewerker] = useState({ naam: '', leeftijd: 15 });
+      const [showToevoegen, setShowToevoegen] = useState(false);
+      const [expandedMedewerker, setExpandedMedewerker] = useState(null);
+      const [loading, setLoading] = useState(true);
+
+      // Data ophalen uit Supabase bij het opstarten
+      useEffect(() => {
+        fetchData();
+      }, []);
+
+      async function fetchData() {
+        setLoading(true);
+        // Haal diensten op
+        const { data: dienstenData } = await supabase.from('diensten').select('*');
+        if (dienstenData) {
+          const dienstenObj = {};
+          dienstenData.forEach(d => { dienstenObj[d.naam] = d.taken || []; });
+          setDiensten(dienstenObj);
+        }
+
+        // Haal medewerkers op
+        const { data: medewerkersData } = await supabase.from('medewerkers').select('*').order('naam');
+        if (medewerkersData) {
+          setMedewerkers(medewerkersData);
+        }
+        setLoading(false);
+      }
+
+      // --- SUPABASE ACTIES VOOR DIENSTEN ---
+      const voegTaakToe = async (dienstNaam) => {
+        const taakNaam = nieuweTaakInput[dienstNaam];
+        if (!taakNaam) return;
+
+        const huidigeTaken = diensten[dienstNaam] || [];
+        const nieuweTaken = [...huidigeTaken, taakNaam];
+
+        // Update in Supabase
+        await supabase.from('diensten').upsert({ naam: dienstNaam, taken: nieuweTaken });
+        
+        // Update lokaal scherm
+        setDiensten({ ...diensten, [dienstNaam]: nieuweTaken });
+        setNieuweTaakInput({ ...nieuweTaakInput, [dienstNaam]: '' });
+      };
+
+      const verwijderTaak = async (dienstNaam, taakIndex) => {
+        const nieuweTaken = [...diensten[dienstNaam]];
+        nieuweTaken.splice(taakIndex, 1);
+        
+        // Update in Supabase
+        await supabase.from('diensten').update({ taken: nieuweTaken }).eq('naam', dienstNaam);
+        
+        // Update lokaal scherm
+        setDiensten({ ...diensten, [dienstNaam]: nieuweTaken });
+      };
+
+      // --- SUPABASE ACTIES VOOR MEDEWERKERS ---
+      const voegMedewerkerToe = async () => {
+        if (!nieuweMedewerker.naam) return;
+        
+        const nieuweData = {
+          naam: nieuweMedewerker.naam,
+          leeftijd: parseInt(nieuweMedewerker.leeftijd),
+          toegewezen_diensten: [],
+          afgevinkte_taken: []
+        };
+
+        const { data, error } = await supabase.from('medewerkers').insert([nieuweData]).select();
+        
+        if (data) {
+          setMedewerkers([...medewerkers, data[0]]);
+          setNieuweMedewerker({ naam: '', leeftijd: 15 });
+          setShowToevoegen(false);
+        }
+      };
+
+      const toggleDienstVoorMedewerker = async (medewerkerId, dienstNaam) => {
+        const medewerker = medewerkers.find(m => m.id === medewerkerId);
+        const heeftDienst = medewerker.toegewezen_diensten?.includes(dienstNaam);
+        
+        const nieuweDiensten = heeftDienst 
+          ? medewerker.toegewezen_diensten.filter(d => d !== dienstNaam)
+          : [...(medewerker.toegewezen_diensten || []), dienstNaam];
+
+        await supabase.from('medewerkers').update({ toegewezen_diensten: nieuweDiensten }).eq('id', medewerkerId);
+        
+        setMedewerkers(medewerkers.map(m => m.id === medewerkerId ? { ...m, toegewezen_diensten: nieuweDiensten } : m));
+      };
+
+      const toggleTaakVoorMedewerker = async (medewerkerId, taakNaam) => {
+        const medewerker = medewerkers.find(m => m.id === medewerkerId);
+        const heeftTaak = medewerker.afgevinkte_taken?.includes(taakNaam);
+        
+        const nieuweTaken = heeftTaak
+          ? medewerker.afgevinkte_taken.filter(t => t !== taakNaam)
+          : [...(medewerker.afgevinkte_taken || []), taakNaam];
+
+        await supabase.from('medewerkers').update({ afgevinkte_taken: nieuweTaken }).eq('id', medewerkerId);
+        
+        setMedewerkers(medewerkers.map(m => m.id === medewerkerId ? { ...m, afgevinkte_taken: nieuweTaken } : m));
+      };
+
+      if (loading) return <div className="p-8 text-center text-gray-500">Laden vanuit database...</div>;
+
+      return (
+        <div className="max-w-md mx-auto min-h-screen bg-gray-50 pb-20">
+          <div className="bg-plusGroen text-white p-4 sticky top-0 z-10 shadow-md">
+            <h1 className="text-xl font-bold">PLUS Inwerken</h1>
+            <div className="flex gap-4 mt-4">
+              <button 
+                onClick={() => setActiveTab('medewerkers')} 
+                className={`pb-1 px-1 border-b-2 ${activeTab === 'medewerkers' ? 'border-white font-bold' : 'border-transparent text-green-200'}`}
+              >
+                Medewerkers
+              </button>
+              <button 
+                onClick={() => setActiveTab('diensten')}
+                className={`pb-1 px-1 border-b-2 ${activeTab === 'diensten' ? 'border-white font-bold' : 'border-transparent text-green-200'}`}
+              >
+                Diensten Beheer
+              </button>
+            </div>
+          </div>
+
+          <div className="p-4">
+            {activeTab === 'medewerkers' && (
+              <div>
+                {!showToevoegen ? (
+                  <button onClick={() => setShowToevoegen(true)} className="w-full bg-plusGroen text-white font-bold py-3 rounded-lg mb-6 shadow-sm">
+                    + Nieuwe Medewerker
+                  </button>
+                ) : (
+                  <div className="bg-white p-4 rounded-xl shadow-sm mb-6 border border-gray-100">
+                    <h3 className="font-bold mb-3">Nieuwe medewerker</h3>
+                    <input type="text" placeholder="Naam" className="w-full p-2 border rounded mb-3"
+                      value={nieuweMedewerker.naam} onChange={e => setNieuweMedewerker({...nieuweMedewerker, naam: e.target.value})} />
+                    <select className="w-full p-2 border rounded mb-3"
+                      value={nieuweMedewerker.leeftijd} onChange={e => setNieuweMedewerker({...nieuweMedewerker, leeftijd: e.target.value})}>
+                      {[14,15,16,17,18].map(l => <option key={l} value={l}>{l} jaar</option>)}
+                    </select>
+                    <div className="flex gap-2">
+                      <button onClick={voegMedewerkerToe} className="flex-1 bg-plusGroen text-white py-2 rounded font-bold">Opslaan</button>
+                      <button onClick={() => setShowToevoegen(false)} className="flex-1 bg-gray-200 text-gray-800 py-2 rounded font-bold">Annuleren</button>
+                    </div>
+                  </div>
+                )}
+
+                {medewerkers.map(m => (
+                  <div key={m.id} className="bg-white rounded-xl shadow-sm mb-4 overflow-hidden border border-gray-100">
+                    <div className="p-4 flex justify-between items-center cursor-pointer" onClick={() => setExpandedMedewerker(expandedMedewerker === m.id ? null : m.id)}>
+                      <div>
+                        <h3 className="font-bold text-lg">{m.naam} <span className="text-gray-400 text-sm font-normal">({m.leeftijd}j)</span></h3>
+                        <p className="text-xs text-gray-500 mt-1">{(m.toegewezen_diensten || []).length} diensten in opleiding</p>
+                      </div>
+                      <span className="text-plusGroen font-bold text-xl">{expandedMedewerker === m.id ? '−' : '+'}</span>
+                    </div>
+
+                    {expandedMedewerker === m.id && (
+                      <div className="p-4 bg-gray-50 border-t border-gray-100">
+                        <h4 className="font-bold text-sm text-gray-500 mb-2 uppercase">1. Diensten Toewijzen</h4>
+                        <div className="mb-6 space-y-2">
+                          {Object.keys(diensten).map(dienstNaam => {
+                            const isAssigned = (m.toegewezen_diensten || []).includes(dienstNaam);
+                            return (
+                              <label key={dienstNaam} className="flex items-center justify-between bg-white p-2 rounded border cursor-pointer">
+                                <span className="text-sm font-medium">{dienstNaam}</span>
+                                <input type="checkbox" checked={isAssigned} onChange={() => toggleDienstVoorMedewerker(m.id, dienstNaam)} className="w-5 h-5 accent-plusGroen" />
+                              </label>
+                            )
+                          })}
+                        </div>
+
+                        <h4 className="font-bold text-sm text-gray-500 mb-2 uppercase">2. Afvinklijsten (Actief)</h4>
+                        {(m.toegewezen_diensten || []).map(dienstNaam => (
+                          <div key={dienstNaam} className="mb-4 bg-white border rounded-lg p-3">
+                            <h5 className="font-bold mb-2 border-b pb-1 text-plusGroen">{dienstNaam}</h5>
+                            {(diensten[dienstNaam] || []).map(taak => {
+                              const isDone = (m.afgevinkte_taken || []).includes(taak);
+                              return (
+                                <label key={taak} className="flex items-start gap-3 py-2 cursor-pointer">
+                                  <input type="checkbox" checked={isDone} onChange={() => toggleTaakVoorMedewerker(m.id, taak)} className="w-5 h-5 mt-0.5 accent-plusGroen flex-shrink-0" />
+                                  <span className={`text-sm ${isDone ? 'line-through text-gray-400' : 'text-gray-700'}`}>{taak}</span>
+                                </label>
+                              )
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {activeTab === 'diensten' && (
+              <div>
+                <p className="text-sm text-gray-500 mb-4">Beheer hier de standaard inwerktaken per dienst. Wijzigingen gelden direct voor alle nieuwe en huidige medewerkers.</p>
+                {Object.entries(diensten).map(([dienstNaam, takenlijst]) => (
+                  <div key={dienstNaam} className="bg-white rounded-xl shadow-sm mb-4 border border-gray-100 p-4">
+                    <h3 className="font-bold text-lg mb-3 text-plusGroen">{dienstNaam}</h3>
+                    <ul className="space-y-2 mb-4">
+                      {takenlijst.map((taak, idx) => (
+                        <li key={idx} className="flex items-center justify-between text-sm bg-gray-50 p-2 rounded border border-gray-100">
+                          <span className="text-gray-700 mr-2">{taak}</span>
+                          <button onClick={() => verwijderTaak(dienstNaam, idx)} className="text-red-400 hover:text-red-600 font-bold p-1">X</button>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" placeholder="Nieuwe taak voor deze dienst..." className="flex-1 p-2 text-sm border rounded"
+                        value={nieuweTaakInput[dienstNaam] || ''}
+                        onChange={e => setNieuweTaakInput({...nieuweTaakInput, [dienstNaam]: e.target.value})}
+                      />
+                      <button onClick={() => voegTaakToe(dienstNaam)} className="bg-plusGroen text-white px-3 py-2 rounded text-sm font-bold">+</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
